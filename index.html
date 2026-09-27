@@ -5,13 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>POV Body Pose — POC</title>
     <style>
-      :root { --bg: #11141a; --panel: #1a1f29; --line: #2b3342; --text: #e6e9ef; --dim: #8b95a7; --accent: #ffe14d; }
+      :root { --bg: #11141a; --panel: #1a1f29; --line: #2b3342; --text: #e6e9ef; --dim: #8b95a7; --accent: #ffe14d; --arrow: #00e5ff; }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
-      #app { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
+      #app { display: grid; grid-template-columns: 290px minmax(0, 1fr); height: 100%; }
       #panel { background: var(--panel); border-right: 1px solid var(--line); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-      #stage { position: relative; min-width: 0; }
-      #view { position: absolute; inset: 0; }
       h1 { font-size: 15px; margin: 0; }
       h1 small { display: block; color: var(--dim); font-weight: 400; margin-top: 2px; }
       label { display: flex; flex-direction: column; gap: 4px; color: var(--dim); font-size: 12px; }
@@ -21,19 +19,44 @@
       button { cursor: pointer; }
       button:hover { border-color: var(--accent); }
       button.on { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+      #drawToggle.on { background: var(--arrow); border-color: var(--arrow); }
       input[type="range"] { width: 100%; accent-color: var(--accent); }
+      summary { cursor: pointer; color: var(--text); }
+      small { color: var(--dim); }
       .stack { display: flex; flex-direction: column; gap: 6px; }
       .stack button { text-align: left; }
       .row2 { display: flex; gap: 6px; }
       .row2 > * { flex: 1; }
       pre { margin: 0; padding: 10px; background: #12161d; border: 1px solid var(--line); border-radius: 6px; font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
-      #minimap { position: absolute; right: 12px; top: 12px; width: min(300px, 45%); height: auto; border: 1px solid var(--line); border-radius: 8px; background: rgba(17, 20, 26, 0.85); }
-      @media (max-width: 800px) {
-        #app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 42vh) 1fr; }
-        #panel { border-right: 0; border-bottom: 1px solid var(--line); }
+
+      /* Disposition « visio » : une vue principale à gauche, deux vignettes à droite, échangeables au clic */
+      #work {
+        display: grid; gap: 8px; padding: 8px; min-width: 0; min-height: 0;
+        grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto auto minmax(0, 1fr);
+        grid-template-areas: "main a" "main b" "main side";
       }
-      #banner { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(17, 20, 26, 0.85); border: 1px solid var(--line); padding: 6px 12px; border-radius: 999px; color: var(--accent); display: none; }
-      #reticle { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border: 1px solid rgba(255,255,255,.55); border-radius: 50%; display: none; pointer-events: none; }
+      .tile { position: relative; background: #0d1016; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 0; min-height: 0; container-type: size; }
+      .tile.main { grid-area: main; }
+      .tile.a { grid-area: a; aspect-ratio: 16 / 9; cursor: pointer; }
+      .tile.b { grid-area: b; aspect-ratio: 16 / 9; cursor: pointer; }
+      .tile:not(.main):hover { border-color: var(--accent); }
+      .chip { position: absolute; left: 8px; top: 8px; z-index: 3; background: rgba(17, 20, 26, 0.8); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; font-size: 11px; pointer-events: none; }
+      .tile.drawing { cursor: crosshair; outline: 2px solid var(--arrow); outline-offset: -2px; }
+      #view { position: absolute; inset: 0; }
+      #minimap { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #videoBox { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(100cqw, 100cqh * 16 / 9); height: min(100cqh, 100cqw * 9 / 16); display: none; background: #000; }
+      #videoBox video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+      #vidCanvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+      #vidEmpty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: var(--dim); font-size: 12px; }
+      #side { grid-area: side; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+      #banner { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(17, 20, 26, 0.85); border: 1px solid var(--line); padding: 6px 12px; border-radius: 999px; color: var(--accent); display: none; z-index: 4; }
+      #reticle { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border: 1px solid rgba(255, 255, 255, 0.55); border-radius: 50%; display: none; pointer-events: none; }
+
+      @media (max-width: 1000px) {
+        #app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 40vh) minmax(0, 1fr); }
+        #panel { border-right: 0; border-bottom: 1px solid var(--line); }
+        #work { grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr) auto auto; grid-template-areas: "main main" "a b" "side side"; }
+      }
     </style>
   </head>
   <body>
@@ -55,6 +78,11 @@
           <button id="modeFree" class="on">Vue libre</button>
           <button id="modePov">POV joueur</button>
         </div>
+        <div class="stack">
+          <button id="drawToggle">✎ Dessiner une flèche</button>
+          <div class="row2"><button id="arrowUndo">Annuler</button><button id="arrowClear">Tout effacer</button></div>
+          <small>Glisse sur la vue principale : la flèche est posée au sol et apparaît sur les 3 vues.</small>
+        </div>
         <label class="row"><input id="lock" type="checkbox" checked /> Horizon verrouillé (ignore le tangage)</label>
         <label class="row"><input id="showCone" type="checkbox" checked /> Cône de vision au sol</label>
         <label class="row"><input id="showPressure" type="checkbox" checked /> Anneau de pression (adversaire le plus proche)</label>
@@ -62,16 +90,42 @@
         <label><span>Lissage <b id="tauLabel"></b></span><input id="tau" type="range" min="0" max="500" value="120" step="10" /></label>
         <label><span>Champ caméra POV <b id="fovLabel"></b></span><input id="fov" type="range" min="60" max="110" value="80" step="1" /></label>
         <label><span>Cône de vision (horizontal) <b id="coneLabel"></b></span><input id="cone" type="range" min="60" max="200" value="120" step="5" /></label>
-        <label>Passes de la phase (clic : pause + POV du passeur)<div id="events" class="stack"></div></label>
-        <pre id="analysis">Aucune passe sélectionnée.</pre>
-        <pre id="stats"></pre>
-        <pre id="summary"></pre>
+        <details id="videoPanel">
+          <summary>Vidéo du match (extrait local)</summary>
+          <div class="stack" style="margin-top: 8px">
+            <small id="vidInfo"></small>
+            <div class="row2">
+              <button data-nudge="-1">−1 s</button><button data-nudge="-0.1">−0,1</button>
+              <button data-nudge="0.1">+0,1</button><button data-nudge="1">+1 s</button>
+            </div>
+            <label class="row"><input id="vidSound" type="checkbox" /> Son de la vidéo</label>
+            <label class="row"><input id="vidOverlay" type="checkbox" /> Superposer terrain et annotations (expérimental)</label>
+          </div>
+        </details>
       </aside>
-      <main id="stage">
-        <div id="view"></div>
-        <canvas id="minimap" width="300" height="194"></canvas>
-        <div id="reticle"></div>
-        <div id="banner"></div>
+
+      <main id="work">
+        <section class="tile main" id="tile3d" data-view="3d">
+          <div id="view"></div>
+          <div id="reticle"></div>
+          <div id="banner"></div>
+          <span class="chip">3D</span>
+        </section>
+        <section class="tile a" id="tile2d" data-view="2d" title="Cliquer pour afficher en grand">
+          <canvas id="minimap"></canvas>
+          <span class="chip">2D</span>
+        </section>
+        <section class="tile b" id="tileVideo" data-view="video" title="Cliquer pour afficher en grand">
+          <div id="vidEmpty">Aucun extrait vidéo local (facultatif).<br />`npm run video` le télécharge.</div>
+          <div id="videoBox"><video id="vid" muted playsinline preload="auto"></video><canvas id="vidCanvas"></canvas></div>
+          <span class="chip">Vidéo</span>
+        </section>
+        <div id="side">
+          <label>Passes de la phase (clic : pause + POV du passeur)<div id="events" class="stack"></div></label>
+          <pre id="analysis">Aucune passe sélectionnée.</pre>
+          <pre id="stats"></pre>
+          <pre id="summary"></pre>
+        </div>
       </main>
     </div>
     <script type="module" src="/src/main.ts"></script>

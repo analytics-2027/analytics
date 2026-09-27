@@ -72,6 +72,21 @@ def load_events(events_csv: Path, first_pf: int, n_frames: int) -> list[dict]:
     return events
 
 
+def video_start(meta: dict, first_pose_frame: int, period: int) -> dict | None:
+    """Temps vidéo (s) de la première frame de pose, d'après le début de la mi-temps dans la vidéo YouTube."""
+    info_csv = ROOT / "data" / "match_video_info.csv"
+    if not info_csv.exists():
+        return None
+    with info_csv.open(encoding="utf-8") as fh:
+        row = next((r for r in csv.DictReader(fh) if int(r["match_id"]) == meta["id"]), None)
+    period_meta = next((p for p in meta["match_periods"] if p["period"] == period), None)
+    if not row or not period_meta:
+        return None
+    seconds_in_period = (first_pose_frame / 2.5 - period_meta["start_frame"]) / 10
+    period_start = float(row["first_period_start" if period == 1 else "second_period_start"])
+    return {"id": row["youtube_video_id"], "start": round(period_start + seconds_in_period, 2), "period": period}
+
+
 def main(
     sample: str = "sample_1925299_phase406.jsonl.gz",
     match: str = "1925299_match.json",
@@ -82,12 +97,15 @@ def main(
     home_id = meta["home_team"]["id"]
 
     frames = []
+    period = 1
     coverage: dict[int, dict[str, int]] = {}
     offsets = []
     on_pitch: set[int] | None = None
     with gzip.open(RAW / sample, "rt", encoding="utf-8") as fh:
         for line in fh:
             rec = json.loads(line)
+            if not frames:
+                period = rec["period"]
             if on_pitch is None:
                 # le tracking contient aussi les joueurs remplacés / pas encore entrés (positions extrapolées)
                 ts = rec["timestamp"][:8]
@@ -144,6 +162,7 @@ def main(
         "fps": 25,
         "pitch": [meta["pitch_length"], meta["pitch_width"]],
         "teams": {"home": meta["home_team"]["name"], "away": meta["away_team"]["name"]},
+        "video": video_start(meta, frames[0]["f"], period),
         "joints": JOINTS,
         "players": players,
         "events": load_events(RAW / events, frames[0]["f"], len(frames)),

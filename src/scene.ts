@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ARROW_HEX, arrowPolys, type Arrow } from './arrows';
 import { J, type Dataset, type Frame, type Vec3 } from './data';
+import { buildStadium } from './stadium';
 
 const BONES: [string, string][] = [
   ['neck', 'nose'], ['nose', 'lEye'], ['nose', 'rEye'], ['lEye', 'lEar'], ['rEye', 'rEar'],
@@ -98,16 +100,7 @@ function buildPitch(length: number, width: number): THREE.Group {
   for (const pts of lines) g.add(new THREE.Mesh(ribbon(pts, false), lineMat));
   for (const pts of closedLines) g.add(new THREE.Mesh(ribbon(pts, true), lineMat));
 
-  const standMat = new THREE.MeshLambertMaterial({ color: 0x5b6470 });
-  const stands: [number, number, number, number][] = [
-    [0, -(W + 9), length + 40, 10], [0, W + 9, length + 40, 10],
-    [-(L + 12), 0, 6, width + 30], [L + 12, 0, 6, width + 30],
-  ];
-  for (const [x, y, sx, sy] of stands) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(sx, 9, sy), standMat);
-    m.position.set(x, 4.5, -y);
-    g.add(m);
-  }
+  g.add(buildStadium(length, width));
   return g;
 }
 
@@ -124,6 +117,9 @@ export class World {
   readonly freeCam = new THREE.PerspectiveCamera(50, 1, 0.1, 600);
   readonly povCam = new THREE.PerspectiveCamera(80, 1, 0.05, 600);
   readonly controls: OrbitControls;
+  private activeCam: THREE.Camera = this.freeCam;
+  private arrowGroup = new THREE.Group();
+  private arrowMat = new THREE.MeshBasicMaterial({ color: ARROW_HEX, side: THREE.DoubleSide, transparent: true, opacity: 0.92, depthWrite: false });
 
   private bones: THREE.InstancedMesh;
   private heads: THREE.InstancedMesh;
@@ -232,6 +228,7 @@ export class World {
       this.scene.add(o);
     }
 
+    this.scene.add(this.arrowGroup);
     this.freeCam.position.set(0, 55, 70);
     this.controls = new OrbitControls(this.freeCam, this.renderer.domElement);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
@@ -389,15 +386,69 @@ export class World {
     pos.needsUpdate = true;
   }
 
+  // point du sol (m) sous un pointeur, avec la caméra actuellement affichée
+  groundPoint(clientX: number, clientY: number): [number, number] | null {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    this.activeCam.updateMatrixWorld(true);
+    ray.setFromCamera(ndc, this.activeCam);
+    const hit = new THREE.Vector3();
+    return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit) ? [hit.x, -hit.z] : null;
+  }
+
+  // joueur le plus proche du pointeur à l'écran (rayon en px CSS), ou null
+  pickPlayer(clientX: number, clientY: number, frame: Frame, radius = 36): string | null {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const cam = this.activeCam;
+    cam.updateMatrixWorld(true);
+    let best: string | null = null;
+    let bd = radius;
+    const v = new THREE.Vector3();
+    for (const [id, p] of Object.entries(frame.p)) {
+      v.set(p.x, 1.0, -p.y);
+      if (v.clone().applyMatrix4(cam.matrixWorldInverse).z >= 0) continue; // derrière la caméra
+      v.project(cam);
+      const d = Math.hypot(((v.x + 1) / 2) * r.width + r.left - clientX, ((1 - v.y) / 2) * r.height + r.top - clientY);
+      if (d < bd) {
+        bd = d;
+        best = id;
+      }
+    }
+    return best;
+  }
+
+  setArrows(arrows: Arrow[]): void {
+    for (const c of [...this.arrowGroup.children]) {
+      this.arrowGroup.remove(c);
+      (c as THREE.Mesh).geometry.dispose();
+    }
+    for (const ar of arrows) {
+      const polys = arrowPolys(ar.a, ar.b);
+      if (!polys) continue;
+      const pos: number[] = [];
+      const v = (p: [number, number]) => pos.push(p[0], 0.07, -p[1]);
+      const [s0, s1, s2, s3] = polys.shaft;
+      for (const p of [s0, s1, s2, s0, s2, s3, ...polys.head]) v(p);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      this.arrowGroup.add(new THREE.Mesh(g, this.arrowMat));
+    }
+  }
+
   render(mode: 'free' | 'pov', sel: SelectionView | null): void {
     if (mode === 'pov' && sel) {
       const e = toThree(sel.eye[0], sel.eye[1], sel.eye[2]);
       const f = toThree(sel.fwd[0], sel.fwd[1], sel.fwd[2]);
       this.povCam.position.copy(e);
       this.povCam.lookAt(e.x + f.x, e.y + f.y, e.z + f.z);
+      this.activeCam = this.povCam;
       this.renderer.render(this.scene, this.povCam);
     } else {
       this.controls.update();
+      this.activeCam = this.freeCam;
       this.renderer.render(this.scene, this.freeCam);
     }
   }

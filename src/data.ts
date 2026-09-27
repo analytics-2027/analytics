@@ -51,6 +51,7 @@ export interface Dataset {
   fps: number;
   pitch: [number, number];
   teams: { home: string; away: string };
+  video: { id: string; start: number; period: number } | null;
   joints: string[];
   players: Record<string, PlayerMeta>;
   events: PassEvent[];
