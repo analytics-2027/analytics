@@ -4,6 +4,9 @@ dist/
 __pycache__/
 .claude/settings.local.json
 data/raw/
+data/laya/
+public/data/match_window.json
+public/data/match_window.joints.bin
 *.zip
 *.log
 public/video/

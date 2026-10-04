@@ -3,107 +3,266 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>POV Body Pose — POC</title>
+    <title>POV coach</title>
     <style>
-      :root { --bg: #11141a; --panel: #1a1f29; --line: #2b3342; --text: #e6e9ef; --dim: #8b95a7; --accent: #ffe14d; --arrow: #00e5ff; }
+      /* Toutes les valeurs viennent du thème (src/theme.ts, applyTheme) ; celles-ci ne servent qu'avant son chargement */
+      :root {
+        --bg: #18191b; --panel: #1e1f21; --card: #232427; --raise: #2b2c30; --line: #35373b; --line2: #55575b;
+        --text: #e4e3df; --dim: #a19f98; --faint: #6f6e69; --accent: #d9d3c3; --on-accent: #18191b;
+        --radius: 4px; --bw: 1px; --font-ui: system-ui, sans-serif; --font-display: system-ui, sans-serif; --font-mono: ui-monospace, monospace;
+        --home: #d98a4e; --away: #6f9cc9; --safe: #8fb59a; --risky: #d2a35b; --cut: #c26a5a;
+      }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
-      #app { display: grid; grid-template-columns: 290px minmax(0, 1fr); height: 100%; }
-      #panel { background: var(--panel); border-right: 1px solid var(--line); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-      h1 { font-size: 15px; margin: 0; }
-      h1 small { display: block; color: var(--dim); font-weight: 400; margin-top: 2px; }
-      label { display: flex; flex-direction: column; gap: 4px; color: var(--dim); font-size: 12px; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 var(--font-ui); overflow: hidden; }
+      #app { position: relative; display: grid; grid-template-columns: 252px minmax(0, 1fr); height: 100%; }
+      #panel { background: var(--panel); border-right: var(--bw) solid var(--line); padding: 16px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+      h1 { font: 600 17px/1.15 var(--font-display); margin: 0; }
+      h1 small { display: block; color: var(--faint); font: 400 11px/1.4 var(--font-ui); margin-top: 4px; }
+      label { display: flex; flex-direction: column; gap: 5px; color: var(--dim); font-size: 12px; }
       label.row { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
-      label b { color: var(--text); font-weight: 500; }
-      select, button { background: #232a37; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
+      label b { color: var(--text); font-weight: 500; font-family: var(--font-mono); }
+      select, button, input { font: inherit; color: var(--text); }
+      select, button { background: var(--raise); border: var(--bw) solid var(--line); border-radius: var(--radius); padding: 7px 10px; transition: border-color 0.15s, background 0.15s; }
       button { cursor: pointer; }
-      button:hover { border-color: var(--accent); }
-      button.on { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
-      #drawToggle.on { background: var(--arrow); border-color: var(--arrow); }
-      input[type="range"] { width: 100%; accent-color: var(--accent); }
-      summary { cursor: pointer; color: var(--text); }
+      button:hover { border-color: var(--line2); }
+      button:disabled { opacity: 0.4; cursor: default; }
+      button.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+      button.primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+      #drawToggle.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+      input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
+      input[type="range"] { width: 100%; }
+      summary { cursor: pointer; color: var(--dim); font-size: 12px; list-style: none; display: flex; align-items: center; gap: 6px; }
+      summary::-webkit-details-marker { display: none; }
+      summary::before { content: "\203A"; display: inline-block; width: 8px; transition: transform 0.15s; color: var(--faint); }
+      details[open] > summary::before { transform: rotate(90deg); }
+      details > .stack { margin-top: 10px; }
       small { color: var(--dim); }
-      .stack { display: flex; flex-direction: column; gap: 6px; }
-      .stack button { text-align: left; }
+      .stack { display: flex; flex-direction: column; gap: 8px; }
       .row2 { display: flex; gap: 6px; }
       .row2 > * { flex: 1; }
-      pre { margin: 0; padding: 10px; background: #12161d; border: 1px solid var(--line); border-radius: 6px; font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+      pre { margin: 0; padding: 10px; background: var(--bg); border: var(--bw) solid var(--line); border-radius: var(--radius); font: 11.5px/1.55 var(--font-mono); white-space: pre-wrap; color: var(--dim); }
+      body.caps .ghead, body.caps .chead, body.caps summary, body.caps button, body.caps .tog span, body.caps #ctxPill, body.caps .chip { text-transform: uppercase; letter-spacing: 0.06em; }
+
+      .transport { display: grid; grid-template-columns: 1fr 70px; gap: 6px; }
+      .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: var(--bw) solid var(--line); border-radius: var(--radius); overflow: hidden; }
+      .seg button { border: 0; border-radius: 0; background: var(--raise); padding: 7px 4px; color: var(--dim); display: flex; align-items: center; justify-content: center; gap: 6px; }
+      .seg button + button { border-left: var(--bw) solid var(--line); }
+      .seg button.on { background: var(--accent); color: var(--on-accent); }
+      .seg.lens { grid-template-columns: repeat(5, 1fr); }
+      .seg.lens button { font-size: 11.5px; }
+      .sw { display: inline-block; width: 9px; height: 9px; border: 1px solid var(--line2); }
+      .sw.home { background: var(--home); }
+      .sw.away { background: var(--away); }
+      #ctxPill { position: absolute; right: 10px; top: 10px; z-index: 5; display: none; align-items: center; gap: 8px; padding: 4px 10px; border-radius: var(--radius); background: var(--panel); border: var(--bw) solid var(--line); font-size: 12px; transition: border-color 0.3s; }
+      #ctxPill.flash { border-color: var(--accent); }
+      #ctxPill b { font-weight: 600; font-family: var(--font-display); }
+      #ctxPill i { font-style: normal; color: var(--faint); }
+      .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; font-size: 12px; align-items: baseline; }
+      .kv span:nth-child(odd) { color: var(--dim); }
+      .kv span:nth-child(even) { font: 12px var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+      body.big-numbers .kv span:nth-child(2) { font: 800 34px/1 var(--font-display); color: var(--accent); }
+      body.big-numbers .kv span:nth-child(1) { align-self: end; }
+      .group { display: flex; flex-direction: column; gap: 8px; }
+      .ghead { font-size: 11px; letter-spacing: 0.04em; color: var(--faint); }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+      .tog { flex-direction: row; cursor: pointer; }
+      .tog input { display: none; }
+      .tog span { padding: 4px 9px; border-radius: var(--radius); border: var(--bw) solid var(--line); background: var(--raise); color: var(--dim); font-size: 12px; transition: all 0.15s; }
+      .tog input:checked + span { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--raise)); }
+      .tools { display: grid; grid-template-columns: 1fr 34px 34px; gap: 6px; }
+      button.icon { padding: 6px 0; }
+      .keys { line-height: 2; color: var(--faint); margin-top: auto; }
 
       /* Disposition « visio » : une vue principale à gauche, deux vignettes à droite, échangeables au clic */
       #work {
-        display: grid; gap: 8px; padding: 8px; min-width: 0; min-height: 0;
-        grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto auto minmax(0, 1fr);
+        display: grid; gap: 10px; padding: 10px; min-width: 0; min-height: 0;
+        grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: auto auto minmax(0, 1fr);
         grid-template-areas: "main a" "main b" "main side";
       }
-      .tile { position: relative; background: #0d1016; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 0; min-height: 0; container-type: size; }
+      .tile { position: relative; background: var(--bg); border: var(--bw) solid var(--line); border-radius: var(--radius); overflow: hidden; min-width: 0; min-height: 0; container-type: size; }
       .tile.main { grid-area: main; }
       .tile.a { grid-area: a; aspect-ratio: 16 / 9; cursor: pointer; }
       .tile.b { grid-area: b; aspect-ratio: 16 / 9; cursor: pointer; }
-      .tile:not(.main):hover { border-color: var(--accent); }
-      .chip { position: absolute; left: 8px; top: 8px; z-index: 3; background: rgba(17, 20, 26, 0.8); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; font-size: 11px; pointer-events: none; }
-      .tile.drawing { cursor: crosshair; outline: 2px solid var(--arrow); outline-offset: -2px; }
+      .tile:not(.main):hover { border-color: var(--line2); }
+      .chip { position: absolute; left: 10px; top: 10px; z-index: 3; background: var(--panel); border: var(--bw) solid var(--line); border-radius: var(--radius); padding: 1px 8px; font: 11px var(--font-mono); color: var(--dim); pointer-events: none; }
+      .tile.drawing { cursor: crosshair; outline: 2px solid var(--accent); outline-offset: -2px; }
       #view { position: absolute; inset: 0; }
       #minimap { position: absolute; inset: 0; width: 100%; height: 100%; }
       #videoBox { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(100cqw, 100cqh * 16 / 9); height: min(100cqh, 100cqw * 9 / 16); display: none; background: #000; }
       #videoBox video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
       #vidCanvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-      #vidEmpty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: var(--dim); font-size: 12px; }
+      #vidEmpty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: var(--faint); font-size: 12px; }
       #side { grid-area: side; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
-      #banner { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(17, 20, 26, 0.85); border: 1px solid var(--line); padding: 6px 12px; border-radius: 999px; color: var(--accent); display: none; z-index: 4; }
-      #reticle { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border: 1px solid rgba(255, 255, 255, 0.55); border-radius: 50%; display: none; pointer-events: none; }
+      .card { background: var(--card); border: var(--bw) solid var(--line); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+      .chead { font: 600 13px/1.3 var(--font-display); }
+      .chead small { font: 400 11px var(--font-ui); color: var(--faint); }
+      #events button { text-align: left; font: 12px var(--font-mono); padding: 6px 9px; }
+      #banner { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--panel); border: var(--bw) solid var(--line); padding: 6px 12px; border-radius: var(--radius); color: var(--accent); display: none; z-index: 4; }
+      #reticle { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border: 1px solid var(--text); opacity: 0.6; border-radius: 50%; display: none; pointer-events: none; }
+
+      /* Options de passe */
+      #optList { display: flex; flex-direction: column; }
+      .opt { display: grid; grid-template-columns: 30px minmax(0, 1fr) 64px; gap: 8px; align-items: center; padding: 6px 4px; border-bottom: var(--bw) solid var(--line); cursor: pointer; font-size: 12px; }
+      .opt:hover, .opt.hover { background: var(--raise); }
+      .opt .num { font: 600 13px var(--font-display); font-variant-numeric: tabular-nums; }
+      .opt .name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      .opt .name i { display: block; font: 11px var(--font-mono); font-style: normal; color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
+      .bar { height: 4px; background: var(--line); overflow: hidden; }
+      .bar > span { display: block; height: 100%; }
+      .tag { font-size: 10px; padding: 0 5px; margin-left: 5px; border: var(--bw) solid currentColor; color: var(--accent); }
+      .tag.warn { color: var(--cut); }
+      .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--faint); }
+      .legend b { display: inline-block; width: 12px; height: 3px; margin-right: 5px; vertical-align: 3px; }
+
+      /* Assistant adaptatif */
+      #suggest { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 6; display: none; align-items: center; gap: 10px; padding: 5px 5px 5px 12px; border-radius: var(--radius); background: var(--panel); border: var(--bw) solid var(--accent); white-space: nowrap; max-width: calc(100% - 24px); }
+      #suggest .p { color: var(--dim); font: 12px var(--font-mono); }
+      #suggest .src { display: none; }
+      kbd { font: 10.5px var(--font-mono); padding: 1px 5px; border: var(--bw) solid var(--line2); border-radius: var(--radius); background: var(--raise); color: var(--text); }
+      #suggest button { padding: 3px 10px; }
+      #toast, #hint { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 6; display: none; align-items: center; gap: 10px; padding: 5px 5px 5px 12px; border-radius: var(--radius); background: var(--panel); border: var(--bw) solid var(--line2); white-space: nowrap; }
+      #toast { padding: 6px 12px; top: 98px; }
+      #hint { top: 54px; }
+      #hint button { padding: 3px 10px; }
+      .dist { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px; }
+      .dist div > div { display: flex; justify-content: space-between; gap: 4px; }
+      .dist h4 { margin: 0 0 2px; font-size: 11px; color: var(--faint); font-weight: 500; }
+      .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+
+      /* Éditeur de thème */
+      .theme-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+      #themeDrawer { position: absolute; top: 0; right: 0; bottom: 0; width: 320px; z-index: 20; background: var(--panel); border-left: var(--bw) solid var(--line); padding: 14px; overflow-y: auto; display: none; flex-direction: column; gap: 10px; }
+      #themeDrawer.open { display: flex; }
+      .te-head { display: grid; grid-template-columns: 1fr 34px; gap: 6px; }
+      .te-head input { background: var(--raise); border: var(--bw) solid var(--line); border-radius: var(--radius); padding: 7px 10px; font: 600 14px var(--font-display); }
+      .te-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .te-group { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; }
+      .te-row { display: grid; grid-template-columns: 1fr 130px; align-items: center; gap: 8px; flex-direction: row; color: var(--dim); }
+      .te-row.te-bool { grid-template-columns: 1fr auto; }
+      .te-row input[type="color"] { width: 100%; height: 26px; padding: 0 2px; border: var(--bw) solid var(--line); border-radius: var(--radius); background: var(--raise); cursor: pointer; }
+      .te-row select { padding: 4px 6px; }
+      #themeDrawer details { border-top: var(--bw) solid var(--line); padding-top: 8px; }
 
       @media (max-width: 1000px) {
         #app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 40vh) minmax(0, 1fr); }
-        #panel { border-right: 0; border-bottom: 1px solid var(--line); }
+        #panel { border-right: 0; border-bottom: var(--bw) solid var(--line); }
         #work { grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr) auto auto; grid-template-areas: "main main" "a b" "side side"; }
+        #themeDrawer { width: 100%; }
       }
     </style>
   </head>
   <body>
     <div id="app">
       <aside id="panel">
-        <h1>POV Body Pose — POC <small id="subtitle"></small></h1>
-        <div class="row2">
-          <button id="play">Lecture</button>
-          <select id="speed">
-            <option value="0.25">0.25x</option>
-            <option value="0.5">0.5x</option>
-            <option value="1" selected>1x</option>
-            <option value="2">2x</option>
+        <h1>POV coach <small id="subtitle"></small></h1>
+        <div class="theme-row">
+          <select id="themeSelect" title="Thème"></select>
+          <button id="themeEdit" title="Modifier le thème">Modifier</button>
+        </div>
+        <select id="dataset" title="Données">
+          <option value="phase">Échantillon : phase 406 (12 s)</option>
+          <option value="match">Extrait du match : 5 min</option>
+        </select>
+        <div class="transport">
+          <button id="play" class="primary">Lecture</button>
+          <select id="speed" title="Vitesse">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
           </select>
         </div>
         <label><span>Temps <b id="timeLabel"></b></span><input id="time" type="range" min="0" value="0" step="1" /></label>
-        <label>Joueur<select id="player"></select></label>
-        <div class="row2">
+        <select id="player" title="Joueur suivi"></select>
+        <div class="seg">
           <button id="modeFree" class="on">Vue libre</button>
           <button id="modePov">POV joueur</button>
         </div>
-        <div class="stack">
-          <button id="drawToggle">✎ Dessiner une flèche</button>
-          <div class="row2"><button id="arrowUndo">Annuler</button><button id="arrowClear">Tout effacer</button></div>
-          <small>Glisse sur la vue principale : la flèche est posée au sol et apparaît sur les 3 vues.</small>
+
+        <div class="group">
+          <div class="ghead">Équipe analysée</div>
+          <div class="seg"><button id="teamHome" class="on"></button><button id="teamAway"></button></div>
         </div>
-        <label class="row"><input id="lock" type="checkbox" checked /> Horizon verrouillé (ignore le tangage)</label>
-        <label class="row"><input id="showCone" type="checkbox" checked /> Cône de vision au sol</label>
-        <label class="row"><input id="showPressure" type="checkbox" checked /> Anneau de pression (adversaire le plus proche)</label>
-        <label class="row"><input id="showCam" type="checkbox" checked /> Emprise de la caméra TV</label>
-        <label><span>Lissage <b id="tauLabel"></b></span><input id="tau" type="range" min="0" max="500" value="120" step="10" /></label>
-        <label><span>Champ caméra POV <b id="fovLabel"></b></span><input id="fov" type="range" min="60" max="110" value="80" step="1" /></label>
-        <label><span>Cône de vision (horizontal) <b id="coneLabel"></b></span><input id="cone" type="range" min="60" max="200" value="120" step="5" /></label>
+
+        <div class="group">
+          <div class="ghead">Lentille</div>
+          <div class="seg lens" id="lensSeg">
+            <button data-lens="auto" class="on" title="Choisie selon la situation de jeu">Auto</button>
+            <button data-lens="attack" title="Attaque placée">Att.</button>
+            <button data-lens="defense" title="Défense en bloc">Déf.</button>
+            <button data-lens="transition" title="Transition">Trans.</button>
+            <button data-lens="pressing" title="Pressing haut">Press.</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="ghead">Afficher</div>
+          <div class="chips">
+            <label class="tog" title="Options de passe du porteur, en pause (O)"><input id="showOptions" type="checkbox" checked /><span>Options de passe</span></label>
+            <label class="tog" title="Cône de vision au sol"><input id="showCone" type="checkbox" checked /><span>Regard</span></label>
+            <label class="tog" title="Anneau de pression : adversaire le plus proche"><input id="showPressure" type="checkbox" checked /><span>Pression</span></label>
+            <label class="tog" title="Emprise de la caméra TV"><input id="showCam" type="checkbox" /><span>Caméra TV</span></label>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="ghead">Annoter</div>
+          <div class="tools">
+            <button id="drawToggle" title="Dessiner une flèche au sol (D)">✎ Flèche</button>
+            <button id="arrowUndo" class="icon" title="Annuler la dernière flèche">↶</button>
+            <button id="arrowClear" class="icon" title="Effacer toutes les flèches">✕</button>
+          </div>
+          <button id="resetMoves" style="display: none">↺ Remettre les joueurs en place</button>
+        </div>
+
+        <details id="assistPanel">
+          <summary>Assistant <span class="dot" id="layaDot"></span></summary>
+          <div class="stack">
+            <select id="engine" title="Moteur de suggestion">
+              <option value="local">Suggestions : apprises localement</option>
+              <option value="laya">Suggestions : Laya</option>
+            </select>
+            <small id="layaStatus">Laya : vérification…</small>
+            <select id="sitEngine" title="Détection de la situation de jeu">
+              <option value="rules">Situation : règles géométriques</option>
+              <option value="laya">Situation : Laya</option>
+            </select>
+            <button id="evalSit">Comparer à SkillCorner</button>
+            <small id="evalOut"></small>
+            <label class="row"><input id="autoApply" type="checkbox" /> Agir seul si ≥ 85 %</label>
+            <div class="dist" id="dist"></div>
+            <small id="assistStats"></small>
+            <div class="row2"><button id="exportLog">Exporter</button><button id="resetModel">Oublier</button></div>
+          </div>
+        </details>
+
+        <details id="settingsPanel">
+          <summary>Réglages</summary>
+          <div class="stack">
+            <label class="row"><input id="lock" type="checkbox" checked /> Horizon verrouillé</label>
+            <label><span>Lissage <b id="tauLabel"></b></span><input id="tau" type="range" min="0" max="500" value="120" step="10" /></label>
+            <label><span>Champ caméra POV <b id="fovLabel"></b></span><input id="fov" type="range" min="60" max="110" value="80" step="1" /></label>
+            <label><span>Cône de vision <b id="coneLabel"></b></span><input id="cone" type="range" min="60" max="200" value="120" step="5" /></label>
+          </div>
+        </details>
+
         <details id="videoPanel">
-          <summary>Vidéo du match (extrait local)</summary>
-          <div class="stack" style="margin-top: 8px">
+          <summary>Vidéo</summary>
+          <div class="stack">
             <small id="vidInfo"></small>
             <div class="row2">
               <button data-nudge="-1">−1 s</button><button data-nudge="-0.1">−0,1</button>
               <button data-nudge="0.1">+0,1</button><button data-nudge="1">+1 s</button>
             </div>
-            <label class="row"><input id="vidSound" type="checkbox" /> Son de la vidéo</label>
-            <label class="row"><input id="vidOverlay" type="checkbox" /> Superposer terrain et annotations (expérimental)</label>
+            <label class="row"><input id="vidSound" type="checkbox" /> Son</label>
+            <label class="row"><input id="vidOverlay" type="checkbox" /> Superposer terrain et joueurs</label>
           </div>
         </details>
+
+        <small class="keys"><kbd>Espace</kbd> lecture · <kbd>O</kbd> options · <kbd>V</kbd> POV · <kbd>D</kbd> flèche · <kbd>Tab</kbd> suggestion</small>
       </aside>
 
+      <aside id="themeDrawer" aria-label="Éditeur de thème"></aside>
       <main id="work">
         <section class="tile main" id="tile3d" data-view="3d">
           <div id="view"></div>
@@ -120,11 +279,31 @@
           <div id="videoBox"><video id="vid" muted playsinline preload="auto"></video><canvas id="vidCanvas"></canvas></div>
           <span class="chip">Vidéo</span>
         </section>
+        <div id="suggest"><span id="sugText"></span><span class="p" id="sugP"></span><span class="src" id="sugSrc"></span><kbd>Tab</kbd><button id="sugOk">OK</button><button id="sugNo" title="Échap">✕</button></div>
+        <div id="toast"></div>
+        <div id="ctxPill"><span class="dot" id="ctxDot"></span><span id="ctxText"></span></div>
+        <div id="hint"><span id="hintText"></span><button id="hintBtn">Prochaine possession ⏭</button></div>
         <div id="side">
-          <label>Passes de la phase (clic : pause + POV du passeur)<div id="events" class="stack"></div></label>
-          <pre id="analysis">Aucune passe sélectionnée.</pre>
-          <pre id="stats"></pre>
-          <pre id="summary"></pre>
+          <div id="ctxCard" class="card" style="display: none">
+            <div class="chead" id="ctxTitle"></div>
+            <div id="ctxRows" class="kv"></div>
+            <small id="ctxTruth"></small>
+          </div>
+          <div id="optBox" class="card" style="display: none">
+            <div class="chead">Options de passe <small id="optTitle"></small></div>
+            <div id="optList"></div>
+            <div class="legend"><span><b style="background: var(--safe)"></b>couloir libre</span><span><b style="background: var(--risky)"></b>risqué</span><span><b style="background: var(--cut)"></b>coupé</span><span>barre = valeur</span></div>
+          </div>
+          <div class="card">
+            <div class="chead">Passes de la phase</div>
+            <div id="events" class="stack"></div>
+            <pre id="analysis" style="display: none"></pre>
+          </div>
+          <details class="card">
+            <summary>Détails du joueur</summary>
+            <pre id="stats"></pre>
+            <pre id="summary"></pre>
+          </details>
         </div>
       </main>
     </div>

@@ -1,4 +1,6 @@
-import { ARROW_CSS, arrowPolys, type Arrow, type Pt } from './arrows';
+import { arrowPolys, type Arrow, type Pt } from './arrows';
+import { theme } from './theme';
+import { drawPasses, drawShapes, rgba, type PassViz, type Shape } from './passviz';
 
 export function formatTime(sec: number): string {
   const s = Math.max(0, sec);
@@ -74,6 +76,9 @@ export interface OverlayScene {
   ring: { cx: number; cy: number; r: number; color: string; opp: Pt } | null;
   cone: { cx: number; cy: number; yaw: number; half: number } | null;
   arrows: Arrow[];
+  passes: PassViz[];
+  shapes: Shape[];
+  t: number;
 }
 
 export class VideoSync {
@@ -134,6 +139,12 @@ export class VideoSync {
 
   setMuted(muted: boolean): void {
     this.el.muted = muted;
+  }
+
+  // temps des données (s) que montre la vidéo, quand elle joue réellement : sert d'horloge maîtresse en lecture
+  get clock(): number | null {
+    if (!this.ready || this.el.paused || this.el.seeking || this.el.readyState < 3) return null;
+    return this.el.currentTime - this.start;
   }
 
   sync(t: number, playing: boolean, speed: number): void {
@@ -197,7 +208,7 @@ export class VideoSync {
           const t = yaw - half + (2 * half * i) / 24;
           pts.push([cx + 30 * Math.cos(t), cy + 30 * Math.sin(t)]);
         }
-        ctx.fillStyle = 'rgba(255,225,77,.28)';
+        ctx.fillStyle = rgba(theme().teams.selected, 0.28);
         poly(pts, true); ctx.fill();
       }
       if (scene.ring) {
@@ -207,7 +218,7 @@ export class VideoSync {
         poly(circle(r.cx, r.cy, r.r)); ctx.stroke();
         ctx.strokeStyle = 'rgba(255,255,255,.6)';
         poly(circle(r.cx, r.cy, 3)); ctx.stroke();
-        ctx.strokeStyle = '#ff4d4d';
+        ctx.strokeStyle = theme().passes.cut;
         poly([[r.cx, r.cy], r.opp]); ctx.stroke();
       }
     }
@@ -221,10 +232,12 @@ export class VideoSync {
         ctx.fill();
       }
     }
+    drawShapes(ctx, scene.shapes, P, Math.max(1, W / 420));
+    drawPasses(ctx, scene.passes, P, Math.max(1, W / 420), scene.t);
     for (const ar of scene.arrows) {
-      const polys = arrowPolys(ar.a, ar.b);
+      const polys = arrowPolys(ar.a, ar.b, ar.w);
       if (!polys) continue;
-      ctx.fillStyle = ARROW_CSS;
+      ctx.fillStyle = ar.color ?? theme().ui.accent;
       ctx.strokeStyle = 'rgba(0,0,0,.65)';
       ctx.lineWidth = Math.max(1, W / 400);
       for (const shape of [polys.shaft, polys.head]) {

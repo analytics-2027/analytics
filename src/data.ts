@@ -5,6 +5,7 @@ export interface PlayerFrame {
   y: number;
   det: boolean;
   j: (Vec3 | null)[] | null;
+  jo?: number;
 }
 
 export interface PassOption {
@@ -46,7 +47,18 @@ export interface PlayerMeta {
   cov: { frames: number; detected: number; joints: number; head: number };
 }
 
+export interface Phase {
+  i: number;
+  start: number;
+  end: number;
+  team: 'home' | 'away';
+  inPoss: string | null;
+  outPoss: string | null;
+}
+
 export interface Dataset {
+  phases?: Phase[];
+  jointsBin?: string;
   match_id: number;
   fps: number;
   pitch: [number, number];
@@ -69,5 +81,41 @@ export const J: Record<string, number> = {};
 export async function loadDataset(url: string): Promise<Dataset> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Chargement impossible: ${url} (${res.status})`);
-  return res.json();
+  const data: Dataset = await res.json();
+  if (data.jointsBin) {
+    const bin = await fetch(new URL(data.jointsBin, new URL(url, location.href)));
+    if (!bin.ok) throw new Error(`Poses introuvables: ${data.jointsBin} (${bin.status})`);
+    attachJoints(data, new Int16Array(await bin.arrayBuffer()));
+  }
+  return data;
+}
+
+// poses en binaire (int16, cm, -32768 = joint absent) : décodées à la lecture pour ne pas créer des millions de tableaux
+let lastPf: PlayerFrame | null = null;
+let lastJ: (Vec3 | null)[] | null = null;
+
+function attachJoints(data: Dataset, buf: Int16Array): void {
+  const n = data.joints.length;
+  for (const fr of data.frames) {
+    for (const pf of Object.values(fr.p)) {
+      const jo = pf.jo;
+      if (jo === undefined || jo < 0) continue;
+      Object.defineProperty(pf, 'j', {
+        enumerable: true,
+        configurable: true,
+        get(): (Vec3 | null)[] {
+          // les boucles lisent p.j plusieurs fois de suite pour le même joueur : une case de cache suffit
+          if (lastPf === pf) return lastJ!;
+          const out: (Vec3 | null)[] = new Array(n);
+          for (let k = 0; k < n; k++) {
+            const o = (jo * n + k) * 3;
+            out[k] = buf[o] === -32768 ? null : [buf[o] / 100, buf[o + 1] / 100, buf[o + 2] / 100];
+          }
+          lastPf = pf;
+          lastJ = out;
+          return out;
+        },
+      });
+    }
+  }
 }

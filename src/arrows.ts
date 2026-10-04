@@ -1,21 +1,24 @@
 export type Pt = [number, number];
 
 // Flèche posée au sol, en coordonnées terrain (m) : la même géométrie est projetée sur la 3D, la 2D et la vidéo.
+// Sans couleur ni épaisseur, c'est une annotation de l'utilisateur ; les options de passe en ont une.
 export interface Arrow {
   a: Pt;
   b: Pt;
+  color?: string;
+  w?: number;
 }
 
 export const ARROW_HEX = 0x00e5ff;
 export const ARROW_CSS = '#00e5ff';
 
-export function arrowPolys(a: Pt, b: Pt): { shaft: Pt[]; head: Pt[] } | null {
+export function arrowPolys(a: Pt, b: Pt, w = 1): { shaft: Pt[]; head: Pt[] } | null {
   const dx = b[0] - a[0], dy = b[1] - a[1];
   const len = Math.hypot(dx, dy);
   if (len < 0.5) return null;
   const ux = dx / len, uy = dy / len;
   const nx = -uy, ny = ux;
-  const headLen = Math.min(2.6, len * 0.45), headHalf = 0.95, shaftHalf = 0.2;
+  const headLen = Math.min(2.6 * w, len * 0.45), headHalf = 0.95 * w, shaftHalf = 0.2 * w;
   const bx = b[0] - ux * headLen, by = b[1] - uy * headLen;
   return {
     shaft: [

@@ -12,9 +12,9 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "public" / "data" / "phase406.json"
-CLIP = ROOT / "public" / "video" / "phase406.mp4"
-META = ROOT / "public" / "video" / "phase406.json"
+from clip_paths import paths
+
+DATA, CLIP, META, _ = paths()
 FPS, W, H = 25, 480, 270
 LAG = 4  # frames entre deux images comparées (vitesse plus robuste qu'image à image)
 
@@ -50,8 +50,10 @@ def smooth(x: np.ndarray, n: int) -> np.ndarray:
 def main() -> None:
     d = json.loads(DATA.read_text(encoding="utf-8"))
     meta = json.loads(META.read_text(encoding="utf-8"))
-    base = d["video"]["start"] - meta["clipStart"]  # temps dans l'extrait de la 1re frame de pose
-    n = len(d["frames"])
+    # segment de 60 s (au-delà, la lecture des images coûte des Go), à partir de argv[2] secondes dans les données
+    seg = int(float(sys.argv[2]) * FPS) if len(sys.argv) > 2 else 0
+    base = d["video"]["start"] - meta["clipStart"] + seg / FPS  # temps dans l'extrait de la 1re frame du segment
+    n = min(len(d["frames"]) - seg, 60 * FPS)
     span = 4.0  # marge de recherche (s) de part et d'autre
     t0 = max(0.0, base - span - 1)
     frames = read_gray_frames(t0, n / FPS + 2 * span + 2)
@@ -61,7 +63,11 @@ def main() -> None:
     vx = smooth(vx, 5)
     video_t = t0 + (np.arange(len(vx)) + LAG / 2) / FPS  # instant (s, extrait) de chaque vitesse
 
-    cx = np.array([(f["cam"][2][0] + f["cam"][3][0]) / 2 for f in d["frames"]])
+    cx = np.array([(f["cam"][2][0] + f["cam"][3][0]) / 2 if f["cam"] else np.nan for f in d["frames"][seg : seg + n]])
+    gap = np.isnan(cx)
+    if gap.all():
+        sys.exit("Pas d'emprise caméra sur la période : calage impossible.")
+    cx[gap] = np.interp(np.flatnonzero(gap), np.flatnonzero(~gap), cx[~gap])
     pan = smooth(np.gradient(smooth(cx, 5)) * FPS, 5)  # m/s
     t = np.arange(n) / FPS
 

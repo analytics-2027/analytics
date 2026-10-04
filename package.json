@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "data": "python scripts/prepare_pose.py",
     "video": "python scripts/fetch_clip.py && python scripts/calibrate_video.py && python scripts/calibrate_camera.py",
-    "calibrate": "python scripts/calibrate_video.py && python scripts/calibrate_camera.py"
+    "calibrate": "python scripts/calibrate_video.py && python scripts/calibrate_camera.py",
+    "laya": "python scripts/laya_serve.py"
   },
   "dependencies": {
     "three": "^0.186.0"

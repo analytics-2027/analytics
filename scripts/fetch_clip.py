@@ -1,7 +1,7 @@
 """Télécharge un extrait vidéo local autour de la phase (optionnel, hors dépôt).
 
-Lit `video` (id + temps de la phase dans la vidéo) dans public/data/phase406.json et écrit
-public/video/phase406.mp4 + public/video/phase406.json ({"id", "clipStart", "duration"}).
+Lit `video` (id + temps de début dans la vidéo) des données et écrit l'extrait + sa méta ({"id", "clipStart", "duration"}).
+Usage : python scripts/fetch_clip.py [phase406|match]   (chemins : scripts/clip_paths.py)
 Nécessite yt-dlp et ffmpeg. À n'utiliser que si tu as le droit d'utiliser cette vidéo.
 """
 import json
@@ -9,17 +9,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+from clip_paths import paths
+
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "public" / "data" / "phase406.json"
 OUT = ROOT / "public" / "video"
 BEFORE, AFTER = 30.0, 40.0
 
 
 def main() -> None:
-    d = json.loads(DATA.read_text(encoding="utf-8"))
+    data, clip, meta, _ = paths()
+    d = json.loads(data.read_text(encoding="utf-8"))
     video = d.get("video")
     if not video:
-        sys.exit("Pas de mapping vidéo dans phase406.json (voir data/match_video_info.csv).")
+        sys.exit(f"Pas de mapping vidéo dans {data.name} (voir data/match_video_info.csv).")
     phase_len = len(d["frames"]) / d["fps"]
     clip_start = max(0.0, video["start"] - BEFORE)
     clip_end = video["start"] + phase_len + AFTER
@@ -34,15 +36,15 @@ def main() -> None:
         "--force-keyframes-at-cuts",
         "--merge-output-format", "mp4",
         "--no-playlist", "--force-overwrites",
-        "-o", str(OUT / "phase406.%(ext)s"),
+        "-o", str(clip.with_suffix(".%(ext)s")),
         f"https://youtu.be/{video['id']}",
     ]
     subprocess.run(cmd, check=True)
-    (OUT / "phase406.json").write_text(
+    meta.write_text(
         json.dumps({"id": video["id"], "clipStart": round(clip_start, 2), "duration": round(clip_end - clip_start, 2)}),
         encoding="utf-8",
     )
-    print(f"extrait {clip_start:.1f}s -> {clip_end:.1f}s dans {OUT / 'phase406.mp4'}")
+    print(f"extrait {clip_start:.1f}s -> {clip_end:.1f}s dans {clip}")
 
 
 if __name__ == "__main__":

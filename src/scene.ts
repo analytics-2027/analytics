@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ARROW_HEX, arrowPolys, type Arrow } from './arrows';
+import { geomFor, type PassViz, type Shape } from './passviz';
+import { hexNum, theme, type Theme } from './theme';
 import { J, type Dataset, type Frame, type Vec3 } from './data';
 import { buildStadium } from './stadium';
 
@@ -18,8 +20,8 @@ const BONE_IDX = BONES.map(([a, b]) => [J[a], J[b]] as const);
 const MAX_PLAYERS = 40;
 const BONE_R = 0.035;
 
-export const TEAM_COLOR = { home: 0xf08a24, away: 0x3a8dde } as const;
-const SELECTED_COLOR = 0xffe14d;
+export const TEAM_COLOR: { home: number; away: number } = { home: 0xf08a24, away: 0x3a8dde };
+let SELECTED_COLOR = 0xffe14d;
 
 // repère terrain (x, y, z haut) -> three.js (x, y haut, -y)
 const toThree = (x: number, y: number, z: number) => new THREE.Vector3(x, z, -y);
@@ -48,22 +50,30 @@ function arc(cx: number, cy: number, r: number, from: number, to: number, steps 
   });
 }
 
-function buildPitch(length: number, width: number): THREE.Group {
+interface PitchMats {
+  stripes: THREE.MeshLambertMaterial[];
+  outer: THREE.MeshLambertMaterial;
+  lines: THREE.MeshBasicMaterial;
+  stadium: THREE.Object3D;
+}
+
+function buildPitch(length: number, width: number): { g: THREE.Group; mats: PitchMats } {
   const g = new THREE.Group();
+  const stripeMats: THREE.MeshLambertMaterial[] = [];
   const L = length / 2, W = width / 2;
 
   const stripes = 21;
   for (let i = 0; i < stripes; i++) {
     const w = length / stripes;
-    const m = new THREE.Mesh(
-      new THREE.PlaneGeometry(w, width),
-      new THREE.MeshLambertMaterial({ color: i % 2 ? 0x2f8a3e : 0x3a9b49 }),
-    );
+    const mat = new THREE.MeshLambertMaterial({ color: i % 2 ? 0x2f8a3e : 0x3a9b49 });
+    stripeMats.push(mat);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, width), mat);
     m.rotation.x = -Math.PI / 2;
     m.position.set(-L + w * (i + 0.5), 0, 0);
     g.add(m);
   }
-  const outer = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: 0x1f5a2b }));
+  const outerMat = new THREE.MeshLambertMaterial({ color: 0x1f5a2b });
+  const outer = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), outerMat);
   outer.rotation.x = -Math.PI / 2;
   outer.position.y = -0.02;
   g.add(outer);
@@ -100,8 +110,9 @@ function buildPitch(length: number, width: number): THREE.Group {
   for (const pts of lines) g.add(new THREE.Mesh(ribbon(pts, false), lineMat));
   for (const pts of closedLines) g.add(new THREE.Mesh(ribbon(pts, true), lineMat));
 
-  g.add(buildStadium(length, width));
-  return g;
+  const stadium = buildStadium(length, width);
+  g.add(stadium);
+  return { g, mats: { stripes: stripeMats, outer: outerMat, lines: lineMat, stadium } };
 }
 
 export interface SelectionView {
@@ -137,6 +148,8 @@ export class World {
   private pLink: THREE.Line;
   private pOpp: THREE.Mesh;
   private camFill: THREE.Mesh;
+  private pitchMats!: PitchMats;
+  private selMats: THREE.MeshBasicMaterial[] = [];
   private camLine: THREE.LineLoop;
 
   constructor(private container: HTMLElement, private data: Dataset) {
@@ -151,7 +164,9 @@ export class World {
     sun.position.set(40, 90, 30);
     this.scene.add(sun);
 
-    this.scene.add(buildPitch(data.pitch[0], data.pitch[1]));
+    const pitch = buildPitch(data.pitch[0], data.pitch[1]);
+    this.pitchMats = pitch.mats;
+    this.scene.add(pitch.g);
 
     const boneMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
     this.bones = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6, 1), boneMat, MAX_PLAYERS * BONES.length);
@@ -191,6 +206,7 @@ export class World {
     );
     this.cone.frustumCulled = false;
     this.scene.add(this.cone);
+    this.selMats.push(this.ring.material as THREE.MeshBasicMaterial, this.cone.material as THREE.MeshBasicMaterial);
 
     const flat = (geo: THREE.BufferGeometry, color: number, opacity: number) => {
       const m = new THREE.Mesh(
@@ -236,6 +252,21 @@ export class World {
 
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
+  }
+
+  applyTheme(t: Theme): void {
+    const sky = new THREE.Color(t.pitch.sky);
+    this.scene.background = sky;
+    (this.scene.fog as THREE.Fog).color = sky;
+    this.pitchMats.stripes.forEach((m, i) => m.color.set(t.pitch.stripes && i % 2 ? t.pitch.grass2 : t.pitch.grass));
+    this.pitchMats.outer.color.set(t.pitch.grass).multiplyScalar(0.82);
+    this.pitchMats.lines.color.set(t.pitch.lines);
+    this.pitchMats.stadium.visible = t.pitch.stadium;
+    TEAM_COLOR.home = hexNum(t.teams.home);
+    TEAM_COLOR.away = hexNum(t.teams.away);
+    SELECTED_COLOR = hexNum(t.teams.selected);
+    for (const m of this.selMats) m.color.set(t.teams.selected);
+    this.arrowMat.color.set(t.ui.accent);
   }
 
   resize(): void {
@@ -420,21 +451,134 @@ export class World {
     return best;
   }
 
+  private arrowMats = new Map<string, THREE.MeshBasicMaterial>();
+  private matFor(color?: string): THREE.MeshBasicMaterial {
+    if (!color) return this.arrowMat;
+    let m = this.arrowMats.get(color);
+    if (!m) {
+      m = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.85, depthWrite: false });
+      this.arrowMats.set(color, m);
+    }
+    return m;
+  }
+
   setArrows(arrows: Arrow[]): void {
     for (const c of [...this.arrowGroup.children]) {
       this.arrowGroup.remove(c);
       (c as THREE.Mesh).geometry.dispose();
     }
     for (const ar of arrows) {
-      const polys = arrowPolys(ar.a, ar.b);
+      const polys = arrowPolys(ar.a, ar.b, ar.w);
       if (!polys) continue;
       const pos: number[] = [];
-      const v = (p: [number, number]) => pos.push(p[0], 0.07, -p[1]);
+      // les annotations passent au-dessus des options de passe
+      const h = ar.color ? 0.06 : 0.07;
+      const v = (p: [number, number]) => pos.push(p[0], h, -p[1]);
       const [s0, s1, s2, s3] = polys.shaft;
       for (const p of [s0, s1, s2, s0, s2, s3, ...polys.head]) v(p);
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      this.arrowGroup.add(new THREE.Mesh(g, this.arrowMat));
+      this.arrowGroup.add(new THREE.Mesh(g, this.matFor(ar.color)));
+    }
+  }
+
+  private passGroup = new THREE.Group();
+  private passMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+
+  // options de passe : ruban courbe au sol, transparent côté porteur et plein côté receveur, anneau sur le receveur
+  setPasses(list: PassViz[]): void {
+    if (!this.passGroup.parent) this.scene.add(this.passGroup);
+    for (const c of [...this.passGroup.children]) {
+      this.passGroup.remove(c);
+      (c as THREE.Mesh).geometry.dispose();
+      const m = (c as THREE.Mesh).material as THREE.Material;
+      if (m !== this.passMat) m.dispose();
+    }
+    const col = new THREE.Color();
+    for (const p of list) {
+      const geo = geomFor(p);
+      if (!geo) continue;
+      col.set(p.color);
+      const strong = p.hover || p.best || p.straight;
+      const pos: number[] = [], clr: number[] = [], idx: number[] = [];
+      const y = 0.065;
+      // corps : bande entre les bords gauche et droit, opacité croissante du porteur vers le receveur
+      geo.left.forEach((L, i) => {
+        const R = geo.right[i];
+        const a = (strong ? 0.35 : 0.2) + (strong ? 0.6 : 0.4) * geo.t[i];
+        pos.push(L[0], y, -L[1], R[0], y, -R[1]);
+        clr.push(col.r, col.g, col.b, a, col.r, col.g, col.b, a);
+        if (i < geo.left.length - 1) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+      });
+      const base = pos.length / 3;
+      for (const H of geo.head) {
+        pos.push(H[0], y + 0.001, -H[1]);
+        clr.push(col.r, col.g, col.b, strong ? 0.95 : 0.6);
+      }
+      idx.push(base, base + 1, base + 2);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(clr, 4));
+      g.setIndex(idx);
+      const mesh = new THREE.Mesh(g, this.passMat);
+      mesh.frustumCulled = false;
+      this.passGroup.add(mesh);
+      if (p.best || p.hover || p.chosen) {
+        const dx = p.b[0] - p.a[0], dy = p.b[1] - p.a[1], l = Math.hypot(dx, dy) || 1;
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(0.95, 1.15, 48),
+          new THREE.MeshBasicMaterial({ color: p.color, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(p.b[0] + (dx / l) * 1.4, 0.07, -(p.b[1] + (dy / l) * 1.4));
+        this.passGroup.add(ring);
+      }
+    }
+  }
+
+  private shapeGroup = new THREE.Group();
+
+  // formes des lentilles au sol : remplissage en éventail (polygones convexes) + contour en ruban
+  setShapes(list: Shape[]): void {
+    if (!this.shapeGroup.parent) this.scene.add(this.shapeGroup);
+    for (const c of [...this.shapeGroup.children]) {
+      this.shapeGroup.remove(c);
+      (c as THREE.Mesh).geometry.dispose();
+      ((c as THREE.Mesh).material as THREE.Material).dispose();
+    }
+    for (const s of list) {
+      if (s.pts.length < 2) continue;
+      const mat = (opacity: number) =>
+        new THREE.MeshBasicMaterial({ color: s.color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false });
+      if (s.fill && s.closed && s.pts.length >= 3) {
+        const cx = s.pts.reduce((a, p) => a + p[0], 0) / s.pts.length, cy = s.pts.reduce((a, p) => a + p[1], 0) / s.pts.length;
+        const pos: number[] = [];
+        s.pts.forEach((p, i) => {
+          const q = s.pts[(i + 1) % s.pts.length];
+          pos.push(cx, 0.045, -cy, p[0], 0.045, -p[1], q[0], 0.045, -q[1]);
+        });
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        this.shapeGroup.add(new THREE.Mesh(g, mat(s.fill)));
+      }
+      const pts = s.closed ? [...s.pts, s.pts[0]] : s.pts;
+      const half = (s.width ?? 1.5) * 0.06;
+      const pos: number[] = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+        const l = Math.hypot(x1 - x0, y1 - y0) || 1;
+        const steps = s.dash ? Math.max(1, Math.floor(l / 1.6)) : 1;
+        for (let k = 0; k < steps; k++) {
+          const t0 = k / steps, t1 = s.dash ? Math.min(1, t0 + 0.55 / steps) : 1;
+          const ax = x0 + (x1 - x0) * t0, ay = y0 + (y1 - y0) * t0, bx = x0 + (x1 - x0) * t1, by = y0 + (y1 - y0) * t1;
+          const nx = (-(y1 - y0) / l) * half, ny = ((x1 - x0) / l) * half;
+          pos.push(ax + nx, 0.05, -(ay + ny), bx + nx, 0.05, -(by + ny), bx - nx, 0.05, -(by - ny));
+          pos.push(ax + nx, 0.05, -(ay + ny), bx - nx, 0.05, -(by - ny), ax - nx, 0.05, -(ay - ny));
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      this.shapeGroup.add(new THREE.Mesh(g, mat(s.alpha ?? 0.9)));
     }
   }
 

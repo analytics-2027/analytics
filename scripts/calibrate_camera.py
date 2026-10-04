@@ -18,10 +18,9 @@ from scipy import ndimage as ndi
 from scipy.optimize import least_squares
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "public" / "data" / "phase406.json"
-CLIP = ROOT / "public" / "video" / "phase406.mp4"
-META = ROOT / "public" / "video" / "phase406.json"
-OUT = ROOT / "public" / "video" / "camera406.json"
+from clip_paths import paths
+
+DATA, CLIP, META, OUT = paths()
 W, H = 640, 360
 FPS = 25
 CAP = 14.0
@@ -118,7 +117,7 @@ def cost_vec(Hm, pts, dt):
     return res, inside
 
 
-def fit_frame(cam, dt, pts, s_start, prior=None, prior_w=0.0):
+def fit_frame(cam, dt, pts, s_start, prior=None, prior_w=0.0, mults=(1.0, 0.6, 1.6, 0.3, -0.3)):
     scale = 100.0
 
     def fun(s):
@@ -128,7 +127,7 @@ def fit_frame(cam, dt, pts, s_start, prior=None, prior_w=0.0):
         return res
 
     best = None
-    for mult in (1.0, 0.6, 1.6, 0.3, -0.3):
+    for mult in mults:
         s0 = np.array(s_start) * scale * mult
         sol = least_squares(fun, s0, loss="soft_l1", f_scale=3.0, x_scale=np.array([0.5, 0.5]), max_nfev=40)
         if best is None or sol.cost < best.cost:
@@ -167,77 +166,99 @@ def overlay_png(rgb, Hm, pts, path):
     img.save(path)
 
 
+class Clip:
+    """Lecture de l'extrait par blocs (la totalité d'un extrait de plusieurs minutes ne tient pas en mémoire)."""
+
+    def __init__(self, t0: float, chunk: int = 150):
+        self.t0, self.chunk, self.c, self.frames, self.dts = t0, chunk, -1, None, {}
+
+    def _load(self, j: int) -> int:
+        c = j // self.chunk
+        if c != self.c:
+            self.frames = read_frames(self.t0 + c * self.chunk / FPS, self.chunk / FPS)
+            self.c, self.dts = c, {}
+        return min(j - c * self.chunk, len(self.frames) - 1)
+
+    def rgb(self, j: int) -> np.ndarray:
+        i = self._load(j)  # charger avant de lire self.frames
+        return self.frames[i]
+
+    def dt(self, j: int) -> np.ndarray:
+        i = self._load(j)
+        if i not in self.dts:
+            self.dts[i] = dist_map(line_mask(self.frames[i]))
+        return self.dts[i]
+
+
 def main(debug_dir: str | None = None) -> None:
     d = json.loads(DATA.read_text(encoding="utf-8"))
     meta = json.loads(META.read_text(encoding="utf-8"))
     n = len(d["frames"])
-    cams = smooth_corners(np.array([f["cam"] for f in d["frames"]], float))
+    # emprise absente (ralentis, plans de coupe) : pas d'homographie, l'application n'y projette rien
+    valid = np.array([f["cam"] is not None for f in d["frames"]])
+    if not valid.any():
+        sys.exit("Aucune emprise caméra dans les données.")
+    idx = np.flatnonzero(valid)
+    filled = [d["frames"][idx[np.argmin(np.abs(idx - k))]]["cam"] if not valid[k] else d["frames"][k]["cam"] for k in range(n)]
+    cams = smooth_corners(np.array(filled, float))
     before = None
     if OUT.exists():
-        before = jitter([np.array(h).reshape(3, 3) for h in json.loads(OUT.read_text(encoding="utf-8"))["H"]])
+        prev = [h for h in json.loads(OUT.read_text(encoding="utf-8"))["H"] if h]
+        before = jitter([np.array(h).reshape(3, 3) for h in prev]) if len(prev) > 3 else None
     base = d["video"]["start"] - meta["clipStart"] + float(meta.get("syncOffset", 0.0))
     t0 = base - 0.8
-    frames = read_frames(t0, n / d["fps"] + 1.6)
+    clip = Clip(t0)
     pts = pitch_points()
-    print(f"{len(frames)} images vidéo à partir de {t0:.2f} s de l'extrait")
-    dts = {}
-
-    def dt_at(j):
-        if j not in dts:
-            dts[j] = dist_map(line_mask(frames[j]))
-        return dts[j]
+    # extrait long : on ajuste une frame sur 10 (2,5 Hz ; ~3 s par ajustement sur CPU) puis on interpole et on lisse
+    long = n > 1000
+    step = 10 if long else 1
+    keys = [k for k in range(0, n, step) if valid[k]]
+    print(f"{n} frames de données, {len(keys)} ajustées, extrait lu à partir de {t0:.2f} s")
+    vid = lambda k, off=0: max(int(round((base + k / d["fps"] - t0) * FPS)) + off, 0)
 
     # décalage temporel résiduel entre coins (données) et image (vidéo) : on garde celui qui aligne le mieux les lignes
     best_off, best_score = 0, None
-    sample = list(range(10, n - 10, 30))
-    for off in (-5, -3, -1, 0, 1, 3, 5):  # en frames
-        tot = 0.0
-        for k in sample:
-            j = int(round((base + k / d["fps"] - t0) * FPS)) + off
-            if not 0 <= j < len(frames):
-                continue
-            _, c = fit_frame(cams[k], dt_at(j), pts, sigma0(cams[k]))
-            tot += c
-        print(f"  décalage {off:+d} frames: coût {tot:.1f}")
+    sample = [k for k in range(10, min(n, 1500) - 10, 60 if long else 30) if valid[k]]
+    for off in (-3, 0, 3) if long else (-5, -3, -1, 0, 1, 3, 5):  # en frames
+        tot = sum(fit_frame(cams[k], clip.dt(vid(k, off)), pts, sigma0(cams[k]))[1] for k in sample)
+        print(f"  décalage {off:+d} frames: coût {tot:.1f}", flush=True)
         if best_score is None or tot < best_score:
             best_off, best_score = off, tot
     print(f"décalage retenu: {best_off:+d} frames ({best_off / FPS * 1000:+.0f} ms)")
 
-    sig = np.zeros((n, 2))
-    cost = np.zeros(n)
-    for k in range(n):
-        j = min(max(int(round((base + k / d["fps"] - t0) * FPS)) + best_off, 0), len(frames) - 1)
-        sig[k], cost[k] = fit_frame(cams[k], dt_at(j), pts, sigma0(cams[k]))
-    # lissage temporel de sigma puis affinage avec a priori
-    smooth = ndi.gaussian_filter1d(sig, 2.0, axis=0, mode="nearest")
-    for k in range(n):
-        j = min(max(int(round((base + k / d["fps"] - t0) * FPS)) + best_off, 0), len(frames) - 1)
-        sig[k], cost[k] = fit_frame(cams[k], dt_at(j), pts, smooth[k], smooth[k] * 100, 0.6)
+    def to_all(ks, vals):
+        return np.column_stack([np.interp(np.arange(n), ks, vals[:, c]) for c in range(vals.shape[1])])
 
-    sig = ndi.gaussian_filter1d(sig, 2.0, axis=0, mode="nearest")
-    Hs = [frame_homography(cams[k], *sig[k]) for k in range(n)]
-    print(f"secousse (px/frame², 960 px): {before:.1f} -> {jitter(Hs):.1f}" if before is not None else f"secousse: {jitter(Hs):.1f}")
+    ks = np.array(keys)
+    sig_k = np.array([fit_frame(cams[k], clip.dt(vid(k, best_off)), pts, sigma0(cams[k]))[0] for k in keys])
+    print("1re passe faite", flush=True)
+    smooth = ndi.gaussian_filter1d(to_all(ks, sig_k), 2.0, axis=0, mode="nearest")
+    # 2e passe : l'a priori lissé suffit comme point de départ
+    sig_k = np.array([fit_frame(cams[k], clip.dt(vid(k, best_off)), pts, smooth[k], smooth[k] * 100, 0.6, mults=(1.0,))[0] for k in keys])
+    sig = ndi.gaussian_filter1d(to_all(ks, sig_k), 4.0 if long else 2.0, axis=0, mode="nearest")
+    Hs = [frame_homography(cams[k], *sig[k]) if valid[k] else None for k in range(n)]
+    good = [h for h in Hs if h is not None]
+    print(f"secousse (px/frame², 960 px): {before:.1f} -> {jitter(good):.1f}" if before is not None else f"secousse: {jitter(good):.1f}")
     score = []
-    for k in range(n):
-        j = min(max(int(round((base + k / d["fps"] - t0) * FPS)) + best_off, 0), len(frames) - 1)
-        res, ins = cost_vec(Hs[k], pts, dt_at(j))
+    for k in keys:
+        res, ins = cost_vec(Hs[k], pts, clip.dt(vid(k, best_off)))
         score.append(np.mean(res[ins] < 3) if ins.any() else 0.0)
     score = np.array(score)
     print(f"points de ligne à <3 px: médiane {np.median(score):.0%}, 10e centile {np.percentile(score, 10):.0%}, min {score.min():.0%}")
 
     if debug_dir:
         Path(debug_dir).mkdir(parents=True, exist_ok=True)
-        for k in (0, 40, 61, 90, 127, 150, 200, 250, n - 1):
-            j = min(max(int(round((base + k / d["fps"] - t0) * FPS)) + best_off, 0), len(frames) - 1)
-            overlay_png(frames[j], Hs[k], pts, Path(debug_dir) / f"cam_{k:03d}.png")
+        for k in np.linspace(0, len(keys) - 1, 9).astype(int):
+            kk = keys[k]
+            overlay_png(clip.rgb(vid(kk, best_off)), Hs[kk], pts, Path(debug_dir) / f"cam_{kk:05d}.png")
         print("images de contrôle dans", debug_dir)
 
     OUT.write_text(
-        json.dumps({"fps": d["fps"], "offsetFrames": best_off, "H": [[round(float(v), 7) for v in Hm.ravel()] for Hm in Hs]}),
+        json.dumps({"fps": d["fps"], "offsetFrames": best_off, "H": [[round(float(v), 7) for v in Hm.ravel()] if Hm is not None else None for Hm in Hs]}),
         encoding="utf-8",
     )
     print(f"écrit {OUT} ({OUT.stat().st_size / 1e3:.0f} ko)")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else None)
+    main(sys.argv[2] if len(sys.argv) > 2 else None)  # argv[1] = jeu de données (phase406 | match)
